@@ -29,9 +29,10 @@
     </div>
 
     <script type="module">
-        import { API_BASE_URL } from './env.js';
+        const API_BASE_URL = "https://staging-martinsl-purchaselis-q7y2.encr.app/";
         const authToken = "caroli32"; // Define the auth token
-        function fetchTasks() {
+
+        window.fetchTasks = function () {
             fetch(API_BASE_URL + '/tasks', {
                 headers: {
                     'Authorization': `Bearer ${authToken}`
@@ -76,7 +77,8 @@
                     console.error('There was a problem fetching the tasks:', error);
                 });
         }
-        function createTask() {
+
+        window.createTask = function () {
             const description = document.getElementById('newTaskDescription').value;
             if (!description) {
                 alert('Please enter a description for the new task.');
@@ -105,7 +107,7 @@
                 });
         }
 
-        async function completeTask(taskId) {
+        window.completeTask = async function (taskId) {
             try {
                 const response = await fetch(API_BASE_URL + `/tasks/${taskId}`, {
                     method: 'PATCH',
@@ -124,7 +126,7 @@
             }
         }
 
-        async function deleteTask(taskId) {
+        window.deleteTask = async function (taskId) {
             try {
                 const response = await fetch(API_BASE_URL + `/tasks/${taskId}`, {
                     method: 'DELETE',
