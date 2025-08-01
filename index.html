@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lista de compras</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+        integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+</head>
+
+<body class="bg-gray-100 flex justify-center items-center h-screen">
+    <div class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4 w-full max-w-lg">
+        <h1 class="text-2xl font-bold mb-6 text-center">Lista de compras</h1>
+        <div id="tasks" class="mb-6">
+            <!-- Tasks will be loaded here -->
+        </div>
+
+        <div class="flex items-center mb-6">
+            <input type="text" id="newTaskDescription" placeholder="Enter description"
+                class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline mr-2">
+            <button onclick="createTask()"
+                class="bg-transparent hover:bg-blue-500 text-blue-700 font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded">+</button>
+        </div>
+
+        <div id="completedTasks" class="mb-6">
+            <!-- Completed tasks will be loaded here -->
+        </div>
+    </div>
+
+    <script>
+        const authToken = "caroli32"; // Define the auth token
+
+        function fetchTasks() {
+            fetch('/tasks')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(tasks => {
+                    const tasksDiv = document.getElementById('tasks');
+                    const completedTasksDiv = document.getElementById('completedTasks');
+                    tasksDiv.innerHTML = ''; // Clear existing tasks
+                    completedTasksDiv.innerHTML = ''; // Clear completed tasks
+
+                    tasks.forEach(task => {
+                        const taskDiv = document.createElement('div');
+                        taskDiv.className = "mb-4 relative flex items-center justify-between"; // Added justify-between
+
+                        let taskContent = `<div class="flex items-center">` +
+                            `<button onclick="completeTask(${task.id})" class="text-gray-500 hover:text-gray-700 focus:outline-none mr-2"><i class="fas fa-check"></i></button>` +
+                            `<div class="flex-grow overflow-hidden whitespace-nowrap text-gray-700" style="max-width: 200px;">` +
+                            `<p class="mr-2"> ${task.description}</p>` +
+                            `</div>` +
+                            `</div>`;
+
+                        let overlay = "";
+                        if (task.completed) {
+                            taskDiv.classList.add('opacity-50'); // Reduce opacity for completed tasks
+                            overlay = `<div class="absolute top-0 left-0 w-full h-full bg-gray-200 opacity-50 flex items-center justify-center" style="pointer-events: none;"><div style="text-decoration: line-through;">` +
+                                taskContent + `</div></div>`
+                        }
+
+                        let button = `<button onclick="deleteTask(${task.id})" class="text-gray-500 hover:text-gray-700 focus:outline-none"><i class="fas fa-times"></i></button>`;
+
+                        taskDiv.innerHTML = `<div class="flex items-center justify-between w-full">` + taskContent + button + `</div>` + overlay;
+
+
+                        if (task.completed) {
+
+                            completedTasksDiv.appendChild(taskDiv);
+                        } else {
+                            tasksDiv.appendChild(taskDiv);
+                        }
+                    });
+                })
+                .catch(error => {
+                    console.error('There was a problem fetching the tasks:', error);
+                });
+        }
+
+        function createTask() {
+            const description = document.getElementById('newTaskDescription').value;
+            if (!description) {
+                alert('Please enter a description for the new task.');
+                return;
+            }
+
+            fetch('/tasks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify({
+                    description: description,
+                    completed: false
+                })
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    // Refresh the task list after creating a new task
+                    fetchTasks();
+                })
+                .catch(error => {
+                    console.error('There was a problem creating the task:', error);
+                });
+        }
+
+        async function completeTask(taskId) {
+            try {
+                const response = await fetch(`/tasks/${taskId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                // Refresh the task list after completing a task
+                fetchTasks();
+            } catch (error) {
+                console.error('There was a problem completing the task:', error);
+            }
+        }
+
+        async function deleteTask(taskId) {
+            try {
+                const response = await fetch(`/tasks/${taskId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                });
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                // Refresh the task list after deleting a task
+                fetchTasks();
+            } catch (error) {
+                console.error('There was a problem deleting the task:', error);
+            }
+        }
+
+
+        // Initial fetch of tasks when the page loads
+        fetchTasks();
+    </script>
+</body>
+
+</html>

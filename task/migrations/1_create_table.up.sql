@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS task_item (
+    id BIGSERIAL PRIMARY KEY,
+    description TEXT NOT NULL,
+    completed BOOLEAN NOT NULL DEFAULT FALSE
+);
