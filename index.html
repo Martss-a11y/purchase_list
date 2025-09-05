@@ -225,7 +225,8 @@
                     }
                     // Clear the input field
                     document.getElementById('newTaskDescription').value = '';
-                    // Real-time updates will handle the UI refresh via WebSocket
+                    // Refresh the task list after creating a new task
+                    fetchTasks();
                 })
                 .catch(error => {
                     console.error('There was a problem creating the task:', error);
@@ -244,7 +245,8 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Real-time updates will handle the UI refresh via WebSocket
+                // Refresh the task list after completing a task
+                fetchTasks();
             } catch (error) {
                 console.error('There was a problem completing the task:', error);
             }
@@ -261,7 +263,8 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Real-time updates will handle the UI refresh via WebSocket
+                // Refresh the task list after completing a task
+                fetchTasks();
             } catch (error) {
                 console.error('There was a problem deleting the task:', error);
             }
@@ -269,8 +272,10 @@
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
-            // Connect to WebSocket for real-time updates
-            connectWebSocket();
+            // First try regular API to see if basic functionality works
+            fetchTasks();
+            // Then try WebSocket for real-time updates
+            // connectWebSocket();
         });
     </script>
 </body>
