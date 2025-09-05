@@ -61,6 +61,7 @@ func (sm *StreamManager) AddStream(id string) chan TaskUpdateMessage {
 	defer sm.mutex.Unlock()
 	ch := make(chan TaskUpdateMessage, 10)
 	sm.streams[id] = ch
+	rlog.Info("Added stream", "id", id, "totalStreams", len(sm.streams))
 	return ch
 }
 
@@ -70,17 +71,20 @@ func (sm *StreamManager) RemoveStream(id string) {
 	if ch, exists := sm.streams[id]; exists {
 		close(ch)
 		delete(sm.streams, id)
+		rlog.Info("Removed stream", "id", id, "totalStreams", len(sm.streams))
 	}
 }
 
 func (sm *StreamManager) Broadcast(message TaskUpdateMessage) {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
+	rlog.Info("Broadcasting message", "type", message.Type, "streams", len(sm.streams))
 	for _, ch := range sm.streams {
 		select {
 		case ch <- message:
+			rlog.Info("Message sent to stream")
 		default:
-			// Channel is full, skip this stream
+			rlog.Warn("Channel is full, skipping stream")
 		}
 	}
 }
@@ -208,43 +212,48 @@ func DeleteTask(ctx context.Context, id string) error {
 	return nil
 }
 
-// StreamTasks streams task updates to connected clients
-//encore:api auth method=GET path=/tasks/stream
-func StreamTasks(ctx context.Context) (*StreamResponse, error) {
+// StreamTasks provides Server-Sent Events for real-time task updates
+//encore:api raw method=GET path=/tasks/stream
+func StreamTasks(w http.ResponseWriter, r *http.Request) {
+	// Set headers for Server-Sent Events
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
+
 	// Generate a unique stream ID
 	streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
 	updateChan := streamManager.AddStream(streamID)
 	defer streamManager.RemoveStream(streamID)
 
 	// Send initial task list
-	tasks, err := GetTasks(ctx)
+	tasks, err := GetTasks(r.Context())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get initial tasks: %w", err)
+		rlog.Error("Failed to get initial tasks", "error", err)
+		return
 	}
 
-	// Create the stream response
-	stream := &StreamResponse{
-		StreamID: streamID,
-		Tasks:    tasks.Tasks,
+	// Send initial data
+	initialData := map[string]interface{}{
+		"streamId": streamID,
+		"tasks":    tasks.Tasks,
+	}
+	if data, err := json.Marshal(initialData); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		w.(http.Flusher).Flush()
 	}
 
-	// Start a goroutine to handle updates
-	go func() {
-		for {
-			select {
-			case update := <-updateChan:
-				// Log the update (in a real implementation, this would be sent to the client)
-				rlog.Info("Task update", "type", update.Type, "streamID", streamID)
-			case <-ctx.Done():
-				return
+	// Listen for updates and send them to the client
+	for {
+		select {
+		case update := <-updateChan:
+			if data, err := json.Marshal(update); err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				w.(http.Flusher).Flush()
 			}
+		case <-r.Context().Done():
+			return
 		}
-	}()
-
-	return stream, nil
-}
-
-type StreamResponse struct {
-	StreamID string `json:"streamId"`
-	Tasks    []Task `json:"tasks"`
+	}
 }
