@@ -44,12 +44,12 @@
                     }
                     return response.json();
                 })
-                .then(tasks => {
+                .then(response => {
                     const tasksDiv = document.getElementById('tasks');
                     const completedTasksDiv = document.getElementById('completedTasks');
                     tasksDiv.innerHTML = ''; // Clear existing tasks
                     completedTasksDiv.innerHTML = ''; // Clear completed tasks
-                    tasks.forEach(task => {
+                    response.tasks.forEach(task => {
                         const taskDiv = document.createElement('div');
                         taskDiv.className = "mb-4 relative flex items-center justify-between"; // Added justify-between
                         let taskContent = `<div class="flex items-center">` +
