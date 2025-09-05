@@ -31,6 +31,130 @@
     <script type="module">
         const API_BASE_URL = "https://staging-martinsl-purchaselis-q7y2.encr.app/";
         const authToken = "caroli32"; // Define the auth token
+        let ws = null; // WebSocket connection
+
+        // Connect to WebSocket for real-time updates
+        function connectWebSocket() {
+            const wsUrl = API_BASE_URL.replace('https://', 'wss://').replace('http://', 'ws://') + 'ws';
+            ws = new WebSocket(wsUrl, [], {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+
+            ws.onopen = function(event) {
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            };
+
+            ws.onclose = function(event) {
+                console.log('WebSocket disconnected, attempting to reconnect...');
+                // Reconnect after 3 seconds
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        // Handle incoming WebSocket messages
+        function handleWebSocketMessage(message) {
+            switch (message.type) {
+                case 'initial':
+                    // Initial task list received
+                    displayTasks(message.tasks);
+                    break;
+                case 'created':
+                    // New task created
+                    addTaskToUI(message.task);
+                    break;
+                case 'updated':
+                    // Task updated
+                    updateTaskInUI(message.task);
+                    break;
+                case 'deleted':
+                    // Task deleted
+                    removeTaskFromUI(message.id);
+                    break;
+            }
+        }
+
+        // Add a new task to the UI
+        function addTaskToUI(task) {
+            const tasksDiv = document.getElementById('tasks');
+            const taskDiv = createTaskElement(task);
+            tasksDiv.appendChild(taskDiv);
+        }
+
+        // Update an existing task in the UI
+        function updateTaskInUI(task) {
+            // Remove the old task element
+            removeTaskFromUI(task.id);
+            // Add the updated task
+            addTaskToUI(task);
+        }
+
+        // Remove a task from the UI
+        function removeTaskFromUI(taskId) {
+            const tasksDiv = document.getElementById('tasks');
+            const completedTasksDiv = document.getElementById('completedTasks');
+            
+            // Look for the task in both divs
+            const taskElement = tasksDiv.querySelector(`[data-task-id="${taskId}"]`) || 
+                               completedTasksDiv.querySelector(`[data-task-id="${taskId}"]`);
+            
+            if (taskElement) {
+                taskElement.remove();
+            }
+        }
+
+        // Create a task element for the UI
+        function createTaskElement(task) {
+            const taskDiv = document.createElement('div');
+            taskDiv.className = "mb-4 relative flex items-center justify-between";
+            taskDiv.setAttribute('data-task-id', task.id);
+            
+            let taskContent = `<div class="flex items-center">` +
+                `<button onclick="completeTask(${task.id})" class="text-gray-500 hover:text-gray-700 focus:outline-none mr-2"><i class="fas fa-check"></i></button>` +
+                `<div class="flex-grow overflow-hidden whitespace-nowrap text-gray-700" style="max-width: 200px;">` +
+                `<p class="mr-2"> ${task.description}</p>` +
+                `</div>` +
+                `</div>`;
+            
+            let overlay = "";
+            if (task.completed) {
+                taskDiv.classList.add('opacity-50');
+                overlay = `<div class="absolute top-0 left-0 w-full h-full bg-gray-200 opacity-50 flex items-center justify-center" style="pointer-events: none;"><div style="text-decoration: line-through;">` +
+                    taskContent + `</div></div>`
+            }
+            
+            let button = `<button onclick="deleteTask(${task.id})" class="text-gray-500 hover:text-gray-700 focus:outline-none"><i class="fas fa-times"></i></button>`;
+            taskDiv.innerHTML = `<div class="flex items-center justify-between w-full">` + taskContent + button + `</div>` + overlay;
+            
+            return taskDiv;
+        }
+
+        // Display all tasks
+        function displayTasks(tasks) {
+            const tasksDiv = document.getElementById('tasks');
+            const completedTasksDiv = document.getElementById('completedTasks');
+            tasksDiv.innerHTML = '';
+            completedTasksDiv.innerHTML = '';
+            
+            tasks.forEach(task => {
+                const taskDiv = createTaskElement(task);
+                if (task.completed) {
+                    completedTasksDiv.appendChild(taskDiv);
+                } else {
+                    tasksDiv.appendChild(taskDiv);
+                }
+            });
+        }
 
         window.fetchTasks = function () {
             fetch(API_BASE_URL + '/tasks', {
@@ -99,8 +223,9 @@
                     if (!response.ok) {
                         throw new Error('Network response was not ok');
                     }
-                    // Refresh the task list after creating a new task
-                    fetchTasks();
+                    // Clear the input field
+                    document.getElementById('newTaskDescription').value = '';
+                    // Real-time updates will handle the UI refresh via WebSocket
                 })
                 .catch(error => {
                     console.error('There was a problem creating the task:', error);
@@ -119,8 +244,7 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Refresh the task list after completing a task
-                fetchTasks();
+                // Real-time updates will handle the UI refresh via WebSocket
             } catch (error) {
                 console.error('There was a problem completing the task:', error);
             }
@@ -137,14 +261,17 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Refresh the task list after deleting a task
-                fetchTasks();
+                // Real-time updates will handle the UI refresh via WebSocket
             } catch (error) {
                 console.error('There was a problem deleting the task:', error);
             }
         }
-        // Initial fetch of tasks when the page loads
-        fetchTasks();
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            // Connect to WebSocket for real-time updates
+            connectWebSocket();
+        });
     </script>
 </body>
 
