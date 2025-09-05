@@ -52,13 +52,23 @@
                     'Authorization': `Bearer ${authToken}`
                 }
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
             .then(data => {
-                const currentTaskCount = data.tasks.length;
-                if (currentTaskCount !== lastTaskCount) {
-                    console.log('Task count changed, refreshing UI');
-                    displayTasks(data.tasks);
-                    lastTaskCount = currentTaskCount;
+                console.log('API response:', data);
+                if (data && data.tasks && Array.isArray(data.tasks)) {
+                    const currentTaskCount = data.tasks.length;
+                    if (currentTaskCount !== lastTaskCount) {
+                        console.log('Task count changed, refreshing UI');
+                        displayTasks(data.tasks);
+                        lastTaskCount = currentTaskCount;
+                    }
+                } else {
+                    console.error('Invalid response structure:', data);
                 }
             })
             .catch(error => {
@@ -80,6 +90,13 @@
             const completedTasksDiv = document.getElementById('completedTasks');
             tasksDiv.innerHTML = '';
             completedTasksDiv.innerHTML = '';
+            
+            // Handle empty or invalid tasks array
+            if (!tasks || !Array.isArray(tasks)) {
+                console.warn('Invalid tasks array:', tasks);
+                lastTaskCount = 0;
+                return;
+            }
             
             // Update the task count
             lastTaskCount = tasks.length;
@@ -137,33 +154,12 @@
                     return response.json();
                 })
                 .then(response => {
-                    const tasksDiv = document.getElementById('tasks');
-                    const completedTasksDiv = document.getElementById('completedTasks');
-                    tasksDiv.innerHTML = ''; // Clear existing tasks
-                    completedTasksDiv.innerHTML = ''; // Clear completed tasks
-                    response.tasks.forEach(task => {
-                        const taskDiv = document.createElement('div');
-                        taskDiv.className = "mb-4 relative flex items-center justify-between"; // Added justify-between
-                        let taskContent = `<div class="flex items-center">` +
-                            `<button onclick="completeTask(${task.id})" class="text-gray-500 hover:text-gray-700 focus:outline-none mr-2"><i class="fas fa-check"></i></button>` +
-                            `<div class="flex-grow overflow-hidden whitespace-nowrap text-gray-700" style="max-width: 200px;">` +
-                            `<p class="mr-2"> ${task.description}</p>` +
-                            `</div>` +
-                            `</div>`;
-                        let overlay = "";
-                        if (task.completed) {
-                            taskDiv.classList.add('opacity-50'); // Reduce opacity for completed tasks
-                            overlay = `<div class="absolute top-0 left-0 w-full h-full bg-gray-200 opacity-50 flex items-center justify-center" style="pointer-events: none;"><div style="text-decoration: line-through;">` +
-                                taskContent + `</div></div>`
-                        }
-                        let button = `<button onclick="deleteTask(${task.id})" class="text-gray-500 hover:text-gray-700 focus:outline-none"><i class="fas fa-times"></i></button>`;
-                        taskDiv.innerHTML = `<div class="flex items-center justify-between w-full">` + taskContent + button + `</div>` + overlay;
-                        if (task.completed) {
-                            completedTasksDiv.appendChild(taskDiv);
-                        } else {
-                            tasksDiv.appendChild(taskDiv);
-                        }
-                    });
+                    console.log('fetchTasks response:', response);
+                    if (response && response.tasks && Array.isArray(response.tasks)) {
+                        displayTasks(response.tasks);
+                    } else {
+                        console.error('Invalid response structure in fetchTasks:', response);
+                    }
                 })
                 .catch(error => {
                     console.error('There was a problem fetching the tasks:', error);
