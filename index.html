@@ -60,7 +60,7 @@
             })
             .then(data => {
                 console.log('API response:', data);
-                if (data && data.tasks && Array.isArray(data.tasks)) {
+                if (data && data.tasks !== undefined && Array.isArray(data.tasks)) {
                     const currentTaskCount = data.tasks.length;
                     if (currentTaskCount !== lastTaskCount) {
                         console.log('Task count changed, refreshing UI');
@@ -155,7 +155,7 @@
                 })
                 .then(response => {
                     console.log('fetchTasks response:', response);
-                    if (response && response.tasks && Array.isArray(response.tasks)) {
+                    if (response && response.tasks !== undefined && Array.isArray(response.tasks)) {
                         displayTasks(response.tasks);
                     } else {
                         console.error('Invalid response structure in fetchTasks:', response);

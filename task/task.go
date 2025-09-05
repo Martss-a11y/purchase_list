@@ -51,21 +51,29 @@ type GetTasksResponse struct {
 
 //encore:api auth method=GET path=/tasks
 func GetTasks(ctx context.Context) (*GetTasksResponse, error) {
-	var tasks []Task
+	tasks := make([]Task, 0) // Initialize as empty slice, not nil
+	rlog.Info("Starting to fetch tasks from database")
+	
 	rows, err := taskDB.Query(ctx, `SELECT id, description, completed FROM task_item ORDER BY id`)
 	if err != nil {
+		rlog.Error("Database query failed", "error", err)
 		return nil, fmt.Errorf("failed to query tasks: %w", err)
 	}
 	defer rows.Close()
 
+	taskCount := 0
 	for rows.Next() {
 		var task Task
 		if err := rows.Scan(&task.ID, &task.Description, &task.Completed); err != nil {
+			rlog.Error("Failed to scan task", "error", err)
 			return nil, fmt.Errorf("failed to scan task: %w", err)
 		}
 		tasks = append(tasks, task)
+		taskCount++
+		rlog.Info("Scanned task", "id", task.ID, "description", task.Description, "completed", task.Completed)
 	}
 
+	rlog.Info("Finished fetching tasks", "count", taskCount)
 	return &GetTasksResponse{Tasks: tasks}, nil
 }
 
@@ -80,7 +88,7 @@ type CreateTaskResponse struct {
 //encore:api auth method=POST path=/tasks
 func CreateTask(ctx context.Context, p *CreateTaskParams) (*CreateTaskResponse, error) {
 	var newTask Task
-	rlog.Debug("log message", "description", p.Description)
+	rlog.Info("Creating new task", "description", p.Description)
 
 	err := taskDB.QueryRow(ctx, `
         INSERT INTO task_item (description, completed)
@@ -88,9 +96,11 @@ func CreateTask(ctx context.Context, p *CreateTaskParams) (*CreateTaskResponse, 
         RETURNING id, description, completed
     `, p.Description).Scan(&newTask.ID, &newTask.Description, &newTask.Completed)
 	if err != nil {
+		rlog.Error("Failed to create task", "error", err)
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 
+	rlog.Info("Successfully created task", "id", newTask.ID, "description", newTask.Description)
 	// Real-time updates handled via polling
 
 	return &CreateTaskResponse{Task: newTask}, nil
