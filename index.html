@@ -31,88 +31,70 @@
     <script type="module">
         const API_BASE_URL = "https://staging-martinsl-purchaselis-q7y2.encr.app/";
         const authToken = "caroli32"; // Define the auth token
-        let eventSource = null; // Server-Sent Events connection
+        let lastTaskCount = 0; // Track task count for polling
+        let pollingInterval = null; // Polling interval
 
-        // Connect to Server-Sent Events for real-time updates
-        function connectToStream() {
-            const streamUrl = API_BASE_URL + 'tasks/stream';
-            eventSource = new EventSource(streamUrl);
-
-            eventSource.onopen = function(event) {
-                console.log('SSE connection opened');
-            };
-
-            eventSource.onmessage = function(event) {
-                try {
-                    const message = JSON.parse(event.data);
-                    console.log('Received SSE message:', message);
-                    handleStreamMessage(message);
-                } catch (error) {
-                    console.error('Error parsing SSE message:', error, 'Raw data:', event.data);
-                }
-            };
-
-            eventSource.onerror = function(error) {
-                console.error('SSE error:', error);
-                eventSource.close();
-                // Reconnect after 3 seconds
-                setTimeout(connectToStream, 3000);
-            };
-        }
-
-        // Handle incoming stream messages
-        function handleStreamMessage(message) {
-            // Check if this is the initial response with tasks
-            if (message.tasks) {
-                displayTasks(message.tasks);
-                return;
-            }
+        // Start polling for real-time updates
+        function startPolling() {
+            // Initial fetch
+            fetchTasks();
             
-            // Handle real-time updates
-            switch (message.type) {
-                case 'created':
-                    // New task created
-                    addTaskToUI(message.task);
-                    break;
-                case 'updated':
-                    // Task updated
-                    updateTaskInUI(message.task);
-                    break;
-                case 'deleted':
-                    // Task deleted
-                    removeTaskFromUI(message.id);
-                    break;
+            // Set up polling every 2 seconds
+            pollingInterval = setInterval(() => {
+                checkForUpdates();
+            }, 2000);
+        }
+
+        // Check for updates by comparing task count
+        function checkForUpdates() {
+            fetch(API_BASE_URL + '/tasks', {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                const currentTaskCount = data.tasks.length;
+                if (currentTaskCount !== lastTaskCount) {
+                    console.log('Task count changed, refreshing UI');
+                    displayTasks(data.tasks);
+                    lastTaskCount = currentTaskCount;
+                }
+            })
+            .catch(error => {
+                console.error('Error checking for updates:', error);
+            });
+        }
+
+        // Stop polling
+        function stopPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
             }
         }
 
-        // Add a new task to the UI
-        function addTaskToUI(task) {
-            const tasksDiv = document.getElementById('tasks');
-            const taskDiv = createTaskElement(task);
-            tasksDiv.appendChild(taskDiv);
-        }
-
-        // Update an existing task in the UI
-        function updateTaskInUI(task) {
-            // Remove the old task element
-            removeTaskFromUI(task.id);
-            // Add the updated task
-            addTaskToUI(task);
-        }
-
-        // Remove a task from the UI
-        function removeTaskFromUI(taskId) {
+        // Update task count when displaying tasks
+        function displayTasks(tasks) {
             const tasksDiv = document.getElementById('tasks');
             const completedTasksDiv = document.getElementById('completedTasks');
+            tasksDiv.innerHTML = '';
+            completedTasksDiv.innerHTML = '';
             
-            // Look for the task in both divs
-            const taskElement = tasksDiv.querySelector(`[data-task-id="${taskId}"]`) || 
-                               completedTasksDiv.querySelector(`[data-task-id="${taskId}"]`);
+            // Update the task count
+            lastTaskCount = tasks.length;
             
-            if (taskElement) {
-                taskElement.remove();
-            }
+            tasks.forEach(task => {
+                const taskDiv = createTaskElement(task);
+                if (task.completed) {
+                    completedTasksDiv.appendChild(taskDiv);
+                } else {
+                    tasksDiv.appendChild(taskDiv);
+                }
+            });
         }
+
+        // These functions are no longer needed with polling approach
 
         // Create a task element for the UI
         function createTaskElement(task) {
@@ -140,22 +122,7 @@
             return taskDiv;
         }
 
-        // Display all tasks
-        function displayTasks(tasks) {
-            const tasksDiv = document.getElementById('tasks');
-            const completedTasksDiv = document.getElementById('completedTasks');
-            tasksDiv.innerHTML = '';
-            completedTasksDiv.innerHTML = '';
-            
-            tasks.forEach(task => {
-                const taskDiv = createTaskElement(task);
-                if (task.completed) {
-                    completedTasksDiv.appendChild(taskDiv);
-                } else {
-                    tasksDiv.appendChild(taskDiv);
-                }
-            });
-        }
+        // displayTasks function is now defined above
 
         window.fetchTasks = function () {
             fetch(API_BASE_URL + '/tasks', {
@@ -270,8 +237,13 @@
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
-            // Connect to the streaming endpoint for real-time updates
-            connectToStream();
+            // Start polling for real-time updates
+            startPolling();
+        });
+
+        // Clean up when page is unloaded
+        window.addEventListener('beforeunload', function() {
+            stopPolling();
         });
     </script>
 </body>
