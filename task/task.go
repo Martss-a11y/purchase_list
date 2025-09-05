@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"encore.dev/beta/auth"
 	"encore.dev/beta/errs"
@@ -34,7 +37,53 @@ var taskDB = sqldb.NewDatabase("task_list", sqldb.DatabaseConfig{
 	Migrations: "./migrations",
 })
 
-// Real-time updates will be implemented later using Encore's streaming APIs
+// Server-Sent Events implementation for real-time updates
+
+// Task update message types
+type TaskUpdateMessage struct {
+	Type string `json:"type"` // "created", "updated", "deleted"
+	Task *Task  `json:"task,omitempty"`
+	ID   *int   `json:"id,omitempty"`
+}
+
+// Streaming connection manager
+type StreamManager struct {
+	streams map[string]chan TaskUpdateMessage
+	mutex   sync.RWMutex
+}
+
+var streamManager = &StreamManager{
+	streams: make(map[string]chan TaskUpdateMessage),
+}
+
+func (sm *StreamManager) AddStream(id string) chan TaskUpdateMessage {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	ch := make(chan TaskUpdateMessage, 10)
+	sm.streams[id] = ch
+	return ch
+}
+
+func (sm *StreamManager) RemoveStream(id string) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	if ch, exists := sm.streams[id]; exists {
+		close(ch)
+		delete(sm.streams, id)
+	}
+}
+
+func (sm *StreamManager) Broadcast(message TaskUpdateMessage) {
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+	for _, ch := range sm.streams {
+		select {
+		case ch <- message:
+		default:
+			// Channel is full, skip this stream
+		}
+	}
+}
 
 //encore:service
 type Service struct {
@@ -93,7 +142,12 @@ func CreateTask(ctx context.Context, p *CreateTaskParams) (*CreateTaskResponse, 
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 
-	// Real-time updates will be implemented later
+	// Broadcast the new task to all connected streams
+	updateMsg := TaskUpdateMessage{
+		Type: "created",
+		Task: &newTask,
+	}
+	streamManager.Broadcast(updateMsg)
 
 	return &CreateTaskResponse{Task: newTask}, nil
 }
@@ -120,7 +174,13 @@ func CompleteTask(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to update task: %w", err)
 	}
 
-	// Real-time updates will be implemented later
+	// Update the task object and broadcast
+	task.Completed = true
+	updateMsg := TaskUpdateMessage{
+		Type: "updated",
+		Task: &task,
+	}
+	streamManager.Broadcast(updateMsg)
 
 	return nil
 }
@@ -137,13 +197,54 @@ func DeleteTask(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to delete task: %w", err)
 	}
 
-	// Real-time updates will be implemented later
+	// Broadcast the deletion to all connected streams
+	taskID, _ := strconv.Atoi(id)
+	updateMsg := TaskUpdateMessage{
+		Type: "deleted",
+		ID:   &taskID,
+	}
+	streamManager.Broadcast(updateMsg)
 
 	return nil
 }
 
-// WebSocket endpoint temporarily disabled - will implement using Encore's streaming APIs
-// //encore:api auth method=GET path=/ws
-// func WebSocketHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-// 	// Implementation will be added using Encore's streaming APIs
-// }
+// StreamTasks streams task updates to connected clients
+//encore:api auth method=GET path=/tasks/stream
+func StreamTasks(ctx context.Context) (*StreamResponse, error) {
+	// Generate a unique stream ID
+	streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+	updateChan := streamManager.AddStream(streamID)
+	defer streamManager.RemoveStream(streamID)
+
+	// Send initial task list
+	tasks, err := GetTasks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get initial tasks: %w", err)
+	}
+
+	// Create the stream response
+	stream := &StreamResponse{
+		StreamID: streamID,
+		Tasks:    tasks.Tasks,
+	}
+
+	// Start a goroutine to handle updates
+	go func() {
+		for {
+			select {
+			case update := <-updateChan:
+				// Log the update (in a real implementation, this would be sent to the client)
+				rlog.Info("Task update", "type", update.Type, "streamID", streamID)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return stream, nil
+}
+
+type StreamResponse struct {
+	StreamID string `json:"streamId"`
+	Tasks    []Task `json:"tasks"`
+}

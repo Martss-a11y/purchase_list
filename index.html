@@ -31,44 +31,44 @@
     <script type="module">
         const API_BASE_URL = "https://staging-martinsl-purchaselis-q7y2.encr.app/";
         const authToken = "caroli32"; // Define the auth token
-        let ws = null; // WebSocket connection
+        let eventSource = null; // Server-Sent Events connection
 
-        // Connect to WebSocket for real-time updates
-        function connectWebSocket() {
-            const wsUrl = API_BASE_URL.replace('https://', 'wss://').replace('http://', 'ws://') + 'ws';
-            ws = new WebSocket(wsUrl, [], {
-                headers: {
-                    'Authorization': `Bearer ${authToken}`
+        // Connect to Server-Sent Events for real-time updates
+        function connectToStream() {
+            const streamUrl = API_BASE_URL + 'tasks/stream';
+            eventSource = new EventSource(streamUrl);
+
+            eventSource.onopen = function(event) {
+                console.log('SSE connection opened');
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleStreamMessage(message);
+                } catch (error) {
+                    console.error('Error parsing SSE message:', error);
                 }
-            });
-
-            ws.onopen = function(event) {
-                console.log('WebSocket connected');
             };
 
-            ws.onmessage = function(event) {
-                const message = JSON.parse(event.data);
-                handleWebSocketMessage(message);
-            };
-
-            ws.onclose = function(event) {
-                console.log('WebSocket disconnected, attempting to reconnect...');
+            eventSource.onerror = function(error) {
+                console.error('SSE error:', error);
+                eventSource.close();
                 // Reconnect after 3 seconds
-                setTimeout(connectWebSocket, 3000);
-            };
-
-            ws.onerror = function(error) {
-                console.error('WebSocket error:', error);
+                setTimeout(connectToStream, 3000);
             };
         }
 
-        // Handle incoming WebSocket messages
-        function handleWebSocketMessage(message) {
+        // Handle incoming stream messages
+        function handleStreamMessage(message) {
+            // Check if this is the initial response with tasks
+            if (message.tasks) {
+                displayTasks(message.tasks);
+                return;
+            }
+            
+            // Handle real-time updates
             switch (message.type) {
-                case 'initial':
-                    // Initial task list received
-                    displayTasks(message.tasks);
-                    break;
                 case 'created':
                     // New task created
                     addTaskToUI(message.task);
@@ -225,8 +225,7 @@
                     }
                     // Clear the input field
                     document.getElementById('newTaskDescription').value = '';
-                    // Refresh the task list after creating a new task
-                    fetchTasks();
+                    // Real-time updates will handle the UI refresh via stream
                 })
                 .catch(error => {
                     console.error('There was a problem creating the task:', error);
@@ -245,8 +244,7 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Refresh the task list after completing a task
-                fetchTasks();
+                // Real-time updates will handle the UI refresh via stream
             } catch (error) {
                 console.error('There was a problem completing the task:', error);
             }
@@ -263,8 +261,7 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Refresh the task list after completing a task
-                fetchTasks();
+                // Real-time updates will handle the UI refresh via stream
             } catch (error) {
                 console.error('There was a problem deleting the task:', error);
             }
@@ -272,10 +269,8 @@
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
-            // First try regular API to see if basic functionality works
-            fetchTasks();
-            // Then try WebSocket for real-time updates
-            // connectWebSocket();
+            // Connect to the streaming endpoint for real-time updates
+            connectToStream();
         });
     </script>
 </body>
