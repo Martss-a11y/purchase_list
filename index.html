@@ -31,56 +31,65 @@
     <script type="module">
         const API_BASE_URL = "https://staging-martinsl-purchaselis-q7y2.encr.app/";
         const authToken = "caroli32"; // Define the auth token
-        let lastTaskCount = 0; // Track task count for polling
-        let pollingInterval = null; // Polling interval
+        let eventSource = null; // Server-Sent Events connection
 
-        // Start polling for real-time updates
-        function startPolling() {
-            // Initial fetch
-            fetchTasks();
+        // Connect to Server-Sent Events for real-time updates
+        function connectToStream() {
+            const streamUrl = API_BASE_URL + 'tasks/stream';
+            eventSource = new EventSource(streamUrl);
+
+            eventSource.onopen = function(event) {
+                console.log('SSE connection opened');
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    console.log('Received SSE message:', message);
+                    handleStreamMessage(message);
+                } catch (error) {
+                    console.error('Error parsing SSE message:', error, 'Raw data:', event.data);
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error('SSE error:', error);
+                eventSource.close();
+                // Reconnect after 3 seconds
+                setTimeout(connectToStream, 3000);
+            };
+        }
+
+        // Handle incoming stream messages
+        function handleStreamMessage(message) {
+            // Check if this is the initial response with tasks
+            if (message.type === 'initial' && message.tasks) {
+                displayTasks(message.tasks);
+                return;
+            }
             
-            // Set up polling every 2 seconds
-            pollingInterval = setInterval(() => {
-                checkForUpdates();
-            }, 2000);
+            // Handle real-time updates
+            switch (message.type) {
+                case 'created':
+                    // New task created - refresh the entire list
+                    fetchTasks();
+                    break;
+                case 'updated':
+                    // Task updated - refresh the entire list
+                    fetchTasks();
+                    break;
+                case 'deleted':
+                    // Task deleted - refresh the entire list
+                    fetchTasks();
+                    break;
+            }
         }
 
-        // Check for updates by comparing task count
-        function checkForUpdates() {
-            fetch(API_BASE_URL + '/tasks', {
-                headers: {
-                    'Authorization': `Bearer ${authToken}`
-                }
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                console.log('API response:', data);
-                if (data && data.tasks !== undefined && Array.isArray(data.tasks)) {
-                    const currentTaskCount = data.tasks.length;
-                    if (currentTaskCount !== lastTaskCount) {
-                        console.log('Task count changed, refreshing UI');
-                        displayTasks(data.tasks);
-                        lastTaskCount = currentTaskCount;
-                    }
-                } else {
-                    console.error('Invalid response structure:', data);
-                }
-            })
-            .catch(error => {
-                console.error('Error checking for updates:', error);
-            });
-        }
-
-        // Stop polling
-        function stopPolling() {
-            if (pollingInterval) {
-                clearInterval(pollingInterval);
-                pollingInterval = null;
+        // Stop SSE connection
+        function stopStream() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
             }
         }
 
@@ -189,7 +198,7 @@
                     }
                     // Clear the input field
                     document.getElementById('newTaskDescription').value = '';
-                    // Real-time updates will handle the UI refresh via stream
+                    // Real-time updates will handle the UI refresh via SSE
                 })
                 .catch(error => {
                     console.error('There was a problem creating the task:', error);
@@ -208,7 +217,7 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Real-time updates will handle the UI refresh via stream
+                // Real-time updates will handle the UI refresh via SSE
             } catch (error) {
                 console.error('There was a problem completing the task:', error);
             }
@@ -225,7 +234,7 @@
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
-                // Real-time updates will handle the UI refresh via stream
+                // Real-time updates will handle the UI refresh via SSE
             } catch (error) {
                 console.error('There was a problem deleting the task:', error);
             }
@@ -233,13 +242,13 @@
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
-            // Start polling for real-time updates
-            startPolling();
+            // Connect to the streaming endpoint for real-time updates
+            connectToStream();
         });
 
         // Clean up when page is unloaded
         window.addEventListener('beforeunload', function() {
-            stopPolling();
+            stopStream();
         });
     </script>
 </body>

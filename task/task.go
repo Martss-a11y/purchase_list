@@ -2,12 +2,16 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"strconv"
 
 	"encore.dev/beta/auth"
 	"encore.dev/beta/errs"
 	"encore.dev/rlog"
 	"encore.dev/storage/sqldb"
+	"encore.dev/pubsub"
 )
 
 type Task struct {
@@ -32,7 +36,17 @@ var taskDB = sqldb.NewDatabase("task_list", sqldb.DatabaseConfig{
 	Migrations: "./migrations",
 })
 
-// Real-time updates will be handled via polling on the frontend
+// TaskUpdateEvent represents a task update event for real-time updates
+type TaskUpdateEvent struct {
+	Type string `json:"type"` // "created", "updated", "deleted"
+	Task *Task  `json:"task,omitempty"`
+	ID   *int   `json:"id,omitempty"`
+}
+
+// TaskUpdatesTopic is the Pub/Sub topic for task updates
+var TaskUpdatesTopic = pubsub.NewTopic("task-updates", pubsub.TopicConfig{
+	DeliveryGuarantee: pubsub.AtLeastOnce,
+})
 
 //encore:service
 type Service struct {
@@ -101,7 +115,15 @@ func CreateTask(ctx context.Context, p *CreateTaskParams) (*CreateTaskResponse, 
 	}
 
 	rlog.Info("Successfully created task", "id", newTask.ID, "description", newTask.Description)
-	// Real-time updates handled via polling
+	
+	// Publish task created event
+	_, err = TaskUpdatesTopic.Publish(ctx, &TaskUpdateEvent{
+		Type: "created",
+		Task: &newTask,
+	})
+	if err != nil {
+		rlog.Error("Failed to publish task created event", "error", err)
+	}
 
 	return &CreateTaskResponse{Task: newTask}, nil
 }
@@ -128,7 +150,15 @@ func CompleteTask(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to update task: %w", err)
 	}
 
-	// Real-time updates handled via polling
+	// Update the task object and publish event
+	task.Completed = true
+	_, err = TaskUpdatesTopic.Publish(ctx, &TaskUpdateEvent{
+		Type: "updated",
+		Task: &task,
+	})
+	if err != nil {
+		rlog.Error("Failed to publish task updated event", "error", err)
+	}
 
 	return nil
 }
@@ -145,9 +175,71 @@ func DeleteTask(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to delete task: %w", err)
 	}
 
-	// Real-time updates handled via polling
+	// Publish task deleted event
+	taskID, _ := strconv.Atoi(id)
+	_, err = TaskUpdatesTopic.Publish(ctx, &TaskUpdateEvent{
+		Type: "deleted",
+		ID:   &taskID,
+	})
+	if err != nil {
+		rlog.Error("Failed to publish task deleted event", "error", err)
+	}
 
 	return nil
 }
 
-// Streaming endpoint removed - using polling approach instead
+// StreamTasks provides Server-Sent Events for real-time task updates
+//encore:api auth raw method=GET path=/tasks/stream
+func StreamTasks(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
+	// Set headers for Server-Sent Events
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
+
+	// Send initial task list
+	tasks, err := GetTasks(ctx)
+	if err != nil {
+		rlog.Error("Failed to get initial tasks for stream", "error", err)
+		http.Error(w, "Failed to get initial tasks", http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial data
+	initialData := map[string]interface{}{
+		"type":  "initial",
+		"tasks": tasks.Tasks,
+	}
+	if data, err := json.Marshal(initialData); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		w.(http.Flusher).Flush()
+	}
+
+	// Create a subscription to the task updates topic
+	subscription := pubsub.NewSubscription(
+		TaskUpdatesTopic, "task-stream-subscription",
+		pubsub.SubscriptionConfig[*TaskUpdateEvent]{
+			Handler: func(ctx context.Context, event *TaskUpdateEvent) error {
+				// Write the event to the response
+				if data, err := json.Marshal(event); err == nil {
+					fmt.Fprintf(w, "data: %s\n\n", data)
+					w.(http.Flusher).Flush()
+				}
+				return nil
+			},
+		},
+	)
+
+	// Start the subscription
+	if err := subscription.Start(ctx); err != nil {
+		rlog.Error("Failed to start subscription", "error", err)
+		return
+	}
+
+	// Wait for the context to be done (client disconnect)
+	<-ctx.Done()
+	rlog.Info("Client disconnected from stream")
+}
