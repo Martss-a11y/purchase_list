@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"encore.dev/beta/auth"
 	"encore.dev/beta/errs"
@@ -47,6 +48,61 @@ type TaskUpdateEvent struct {
 var TaskUpdatesTopic = pubsub.NewTopic("task-updates", pubsub.TopicConfig{
 	DeliveryGuarantee: pubsub.AtLeastOnce,
 })
+
+// Connection manager for SSE connections
+type ConnectionManager struct {
+	connections map[string]chan *TaskUpdateEvent
+	mutex       sync.RWMutex
+}
+
+var connManager = &ConnectionManager{
+	connections: make(map[string]chan *TaskUpdateEvent),
+}
+
+func (cm *ConnectionManager) AddConnection(id string) chan *TaskUpdateEvent {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	ch := make(chan *TaskUpdateEvent, 10)
+	cm.connections[id] = ch
+	rlog.Info("Added SSE connection", "id", id, "totalConnections", len(cm.connections))
+	return ch
+}
+
+func (cm *ConnectionManager) RemoveConnection(id string) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	if ch, exists := cm.connections[id]; exists {
+		close(ch)
+		delete(cm.connections, id)
+		rlog.Info("Removed SSE connection", "id", id, "totalConnections", len(cm.connections))
+	}
+}
+
+func (cm *ConnectionManager) Broadcast(event *TaskUpdateEvent) {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	rlog.Info("Broadcasting to connections", "type", event.Type, "connections", len(cm.connections))
+	for _, ch := range cm.connections {
+		select {
+		case ch <- event:
+		default:
+			// Channel is full, skip this connection
+		}
+	}
+}
+
+// TaskUpdatesSubscription handles task update events and broadcasts to SSE connections
+var TaskUpdatesSubscription = pubsub.NewSubscription(
+	TaskUpdatesTopic, "task-updates-subscription",
+	pubsub.SubscriptionConfig[*TaskUpdateEvent]{
+		Handler: func(ctx context.Context, event *TaskUpdateEvent) error {
+			rlog.Info("Received task update event", "type", event.Type)
+			// Broadcast to all SSE connections
+			connManager.Broadcast(event)
+			return nil
+		},
+	},
+)
 
 //encore:service
 type Service struct {
@@ -200,6 +256,16 @@ func StreamTasks(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
 
+	// Generate a unique connection ID
+	connID := fmt.Sprintf("conn_%d", req.Context().Value("request_id"))
+	if connID == "conn_<nil>" {
+		connID = fmt.Sprintf("conn_%d", req.RemoteAddr)
+	}
+
+	// Add connection to manager
+	updateChan := connManager.AddConnection(connID)
+	defer connManager.RemoveConnection(connID)
+
 	// Send initial task list
 	tasks, err := GetTasks(ctx)
 	if err != nil {
@@ -218,28 +284,17 @@ func StreamTasks(w http.ResponseWriter, req *http.Request) {
 		w.(http.Flusher).Flush()
 	}
 
-	// Create a subscription to the task updates topic
-	subscription := pubsub.NewSubscription(
-		TaskUpdatesTopic, "task-stream-subscription",
-		pubsub.SubscriptionConfig[*TaskUpdateEvent]{
-			Handler: func(ctx context.Context, event *TaskUpdateEvent) error {
-				// Write the event to the response
-				if data, err := json.Marshal(event); err == nil {
-					fmt.Fprintf(w, "data: %s\n\n", data)
-					w.(http.Flusher).Flush()
-				}
-				return nil
-			},
-		},
-	)
-
-	// Start the subscription
-	if err := subscription.Start(ctx); err != nil {
-		rlog.Error("Failed to start subscription", "error", err)
-		return
+	// Listen for updates and send them to the client
+	for {
+		select {
+		case update := <-updateChan:
+			if data, err := json.Marshal(update); err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				w.(http.Flusher).Flush()
+			}
+		case <-ctx.Done():
+			rlog.Info("Client disconnected from stream", "connID", connID)
+			return
+		}
 	}
-
-	// Wait for the context to be done (client disconnect)
-	<-ctx.Done()
-	rlog.Info("Client disconnected from stream")
 }
