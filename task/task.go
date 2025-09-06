@@ -95,14 +95,17 @@ func (cm *ConnectionManager) Broadcast(event *TaskUpdateEvent) {
 var TaskUpdatesSubscription = pubsub.NewSubscription(
 	TaskUpdatesTopic, "task-updates-subscription",
 	pubsub.SubscriptionConfig[*TaskUpdateEvent]{
-		Handler: func(ctx context.Context, event *TaskUpdateEvent) error {
-			rlog.Info("Received task update event", "type", event.Type)
-			// Broadcast to all SSE connections
-			connManager.Broadcast(event)
-			return nil
-		},
+		Handler: handleTaskUpdateEvent,
 	},
 )
+
+// handleTaskUpdateEvent processes task update events and broadcasts to SSE connections
+func handleTaskUpdateEvent(ctx context.Context, event *TaskUpdateEvent) error {
+	rlog.Info("Received task update event", "type", event.Type)
+	// Broadcast to all SSE connections
+	connManager.Broadcast(event)
+	return nil
+}
 
 //encore:service
 type Service struct {
